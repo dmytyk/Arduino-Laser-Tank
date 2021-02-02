@@ -29,6 +29,17 @@ const short socketPort  = 8080;
     // A2/D17 - Red LED
     #define FireLED  17
 #endif
+
+#ifndef VoltageMonitorPin
+    // A6 / D21
+    #define VoltageMonitorPin  A6
+#endif
+
+#ifndef LowVoltagePin
+    // D8 - Red LED
+    #define LowVoltagePin  8
+#endif
+
 #ifndef LASERDIGITALPWM
     // D5 - PWM Out to TTL of Laser
     #define LASERDIGITALPWM  5
@@ -223,7 +234,7 @@ void checkMotorRange()
 void sendBatteryStatus()
 { 
     // read the Battery Voltage
-    raw_read = analogRead(A6);
+    raw_read = analogRead(VoltageMonitorPin);
     BatteryVoltage = (((float)raw_read) * 11.4 / 1023);
     BatteryAverageBuild += BatteryVoltage;
 
@@ -239,7 +250,12 @@ void sendBatteryStatus()
 
         // send an error message if the battery is below the error threshold
         if(BatteryAverageFinal < 10.1) {
+            // turn on Low Battery Light
+            digitalWrite(LowVoltagePin, HIGH);
             webSocketServer.sendData("E:LOW BATTERY, Please Shout Down Now!");  
+        } else {
+            // turn off Low Battery Light
+            digitalWrite(LowVoltagePin, LOW);
         }
     }
 }
@@ -468,7 +484,11 @@ void setup()
     // we use this led to show the background is running
     // flased on and off every time we go through the background loop
     pinMode(LED_BUILTIN, OUTPUT);
-    
+
+    // setup the low voltage pin
+    pinMode(LowVoltagePin, OUTPUT);
+    digitalWrite(LowVoltagePin, LOW);
+
     // set the Target LED
     pinMode(TargetLED, OUTPUT);
     digitalWrite(TargetLED, LOW);
@@ -512,11 +532,20 @@ void setup()
     Serial1.begin(57600); // Initialize serial port to send and receive at 57600 baud
 
     // get the initial battery status so we can preset the battery average until we have one (every 30 seconds)
-    sendBatteryStatus();
-    BatteryAverageFinal = BatteryVoltage;
-    // check to make sure we got enough battery to continue
-    if(BatteryAverageFinal < 10.1) {
+
+    // Get the Initial Battery Status so we can preset the battery average until we have one (every 30 seconds)
+    // also check and make sure we are good to go else set the Low Voltage LED and wait
+    while(BatteryAverageFinal < 10.1) {
+      sendBatteryStatus();
+
+      // check to make sure we got enough battery to continue
+      if(BatteryVoltage < 10.1) {
         // turn on Low Battery Light and do nothing else
+        digitalWrite(LowVoltagePin, HIGH);
+      } else {
+          BatteryAverageFinal = BatteryVoltage;
+          digitalWrite(LowVoltagePin, LOW);
+      }
     }
 
     Serial.println("\nStart MultiServers");
@@ -534,8 +563,6 @@ void setup()
     // start the connection
     WiFiConnect();
 
-    // call ISR - TC4_Handler 1000 times per second
-    //  setup_timer4(1000);
     // call ISR - TC4_Handler 100000 times per second
     // an interrupt is called every 10 microseconds so to get:
     // count 1 interrupts = 10us
