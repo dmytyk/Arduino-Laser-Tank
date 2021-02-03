@@ -35,6 +35,11 @@ const short socketPort  = 8080;
     #define VoltageMonitorPin  A6
 #endif
 
+#ifndef LowVoltageCutoff
+    // D9 - Blue LED
+    #define LowVoltageCutoff  10
+#endif
+
 #ifndef LowVoltagePin
     // D8 - Red LED
     #define LowVoltagePin  8
@@ -249,7 +254,7 @@ void sendBatteryStatus()
         webSocketServer.sendData("S:C = " + String(BatteryVoltage) + "v, A = " + String(BatteryAverageFinal) + "v, Raw = " + String(raw_read));
 
         // send an error message if the battery is below the error threshold
-        if(BatteryAverageFinal < 10.1) {
+        if(BatteryAverageFinal < LowVoltageCutoff) {
             // turn on Low Battery Light
             digitalWrite(LowVoltagePin, HIGH);
             webSocketServer.sendData("E:LOW BATTERY, Please Shout Down Now!");  
@@ -535,11 +540,11 @@ void setup()
 
     // Get the Initial Battery Status so we can preset the battery average until we have one (every 30 seconds)
     // also check and make sure we are good to go else set the Low Voltage LED and wait
-    while(BatteryAverageFinal < 10.1) {
+    while(BatteryAverageFinal <= LowVoltageCutoff) {
       sendBatteryStatus();
 
       // check to make sure we got enough battery to continue
-      if(BatteryVoltage < 10.1) {
+      if(BatteryVoltage <= LowVoltageCutoff) {
         // turn on Low Battery Light and do nothing else
         digitalWrite(LowVoltagePin, HIGH);
       } else {
