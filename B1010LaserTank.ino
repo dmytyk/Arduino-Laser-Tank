@@ -381,8 +381,8 @@ void setup_timer4(uint16_t clk_div_, uint8_t count_)
         case 256:  prescale=TC_CTRLA_PRESCALER(6); break;
         case 1024: prescale=TC_CTRLA_PRESCALER(7); break;
     }
-    REG_TC4_CTRLA |= prescale | TC_CTRLA_WAVEGEN_MFRQ | TC_CTRLA_ENABLE;    // Enable TC4
-    while (TC4->COUNT8.STATUS.bit.SYNCBUSY);           // Wait for synchronization
+    REG_TC4_CTRLA |= prescale | TC_CTRLA_WAVEGEN_MFRQ | TC_CTRLA_ENABLE;  // Enable TC4
+    while (TC4->COUNT8.STATUS.bit.SYNCBUSY);                              // Wait for synchronization
 }
 
 uint16_t next_pow2(uint16_t v_)
@@ -411,7 +411,8 @@ uint16_t get_clk_div(uint32_t freq_)
 // End MKR1010 software interrupt functions **********
 
 // Interrupt Service Routine (ISR)
-void TC4_Handler()
+void
+()
 {
   if (TC4->COUNT16.INTFLAG.bit.OVF && TC4->COUNT16.INTENSET.bit.OVF)
   {
@@ -467,7 +468,6 @@ void TC4_Handler()
     // see if Targeting is active and/or we were asked to Fire the Laser
     if(ISR_LaserFire) {
         // Fire
-        // generate a digital pulse every 5 milliseconds
         // the length of the pulse is determined by the value of ISR_LaserFireLength (as milliseconds)
         if(ISR_LaserFireCount == 0) {
             digitalWrite(LASERDIGITALPWM, HIGH);
@@ -598,14 +598,7 @@ void setup()
 
    // done initilization so start the interrupts
    // call ISR - TC4_Handler 20000 times per second
-   // an interrupt is called every 50 microseconds so to get:
-   // count 1 interrupts = 50us
-   // count 20 interrupts = 1ms
-   // count 100 interrupts = 5ms
-   // count 200 interrupts = 10ms
-   // count 20000 interrupts = 1s
-   // count 60000 interrupts = 3s
-   // count 100000 interrupts = 5s
+   // an interrupt is called every 50 microseconds
    setup_timer4(20000);
 
    // setup complete
