@@ -8,18 +8,29 @@
 #include <Adafruit_PWMServoDriver.h>
 #include "arduino_secrets.h"
 
-// Console Attached
-#ifndef TerminalAttached
-    // true = terminal attached (send serial messages), false = no terminal attached no messages 
-    #define TerminalAttached  false
-#endif
-
 // global var
 char ssid[] = SECRET_SSID;
 char pass[] = SECRET_PASS;
 const byte IPLastByte  = 99;
 const short webPort     = 80;
 const short socketPort  = 8080;
+
+// OBJECTS
+// laser servo objects
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
+
+// WiFi
+WiFiServer      webServer(webPort);
+WiFiServer      socketServer(socketPort);
+WebSocketServer webSocketServer;
+WiFiClient      socketClient;
+
+// Console Attached
+#ifndef TerminalAttached
+    // true = terminal attached (send serial messages), false = no terminal attached no messages 
+    #define TerminalAttached  false
+#endif
+
 
 // PIN ASSIGNMENTS
 // Battery Monitor
@@ -35,6 +46,7 @@ const short socketPort  = 8080;
     // D6 - Red LED
     #define LowVoltagePin  7
 #endif
+
 
 // Motor Control
 #ifndef MRen1
@@ -73,32 +85,46 @@ const short socketPort  = 8080;
     // Delay time to Switch Direction, allow motors to slow down first so they are not hammered by the direction switch
     #define TankSwitchTime  500
 #endif
-#ifndef SERVO_MIN_PULSE_WIDTH
+
+
+// Laser
+#ifndef LASER_LR_SERVO_MIN_PULSE
     // PCA9685 minimum pulse with to servos
-    #define SERVO_MIN_PULSE_WIDTH   600
+    #define LASER_LR_SERVO_MIN_PULSE   120
 #endif
-#ifndef SERVO_MAX_PULSE_WIDTH
+#ifndef LASER_LR_SERVO_MAX_PULSE
+    // PCA9685 minimum pulse with to servos
+    #define LASER_LR_SERVO_MAX_PULSE   550
+#endif
+#ifndef LASER_UD_SERVO_MIN_PULSE
     // PCA9685 maximum pulse with to servos
-    #define SERVO_MAX_PULSE_WIDTH   2400
+    #define LASER_UD_SERVO_MIN_PULSE   108
+#endif
+#ifndef LASER_UD_SERVO_MAX_PULSE
+    // PCA9685 maximum pulse with to servos
+    #define LASER_UD_SERVO_MAX_PULSE   325
 #endif
 #ifndef SERVO_FREQUENCY
     // PCA9685 frequency of pulses to servos
     #define SERVO_FREQUENCY 50
 #endif
-
-// Laser
+#ifndef SERVO_OSCILLATORFREQUENCY
+    // PCA9685 oscillator frequency
+    #define SERVO_OSCILLATORFREQUENCY 25000000
+#endif
 #ifndef LASERDIGITALPWM
     // D5 - PWM Out to TTL of Laser
     #define LASERDIGITALPWM  5
 #endif
-#ifndef LASECENTERLR
+#ifndef LASERSTARTLR
     // the center of the left/right position
-    #define LASECENTERLR 1630
+    #define LASERSTARTLR 330
 #endif
-#ifndef LASEMAXUD
-    // the maximum up position
-    #define LASEMAXUD 1500
+#ifndef LASERSTARTUD
+    // the center of the left/right position
+    #define LASERSTARTUD 108
 #endif
+
 
 // ISR
 // call ISR - TC4_Handler 20000 times per second
@@ -127,6 +153,7 @@ const short socketPort  = 8080;
     #define ISR_5SECS 100000
 #endif
 
+
 // motor speed control values, these are set as commands come in from client
 // Motor control range is 0 : 250 (0 - 5 or 0 = off and 5 = full speed)
 // each click applies one count of the default motor resolution
@@ -142,9 +169,11 @@ short leftmotorspd = 0;
 // left motor direction true = forward, false =  reverse
 boolean leftmotordir = true;
 
+
 // Laser servos
 int LaserLR = 0;
 int LaserUD = 1;
+
 
 // Battery
 short raw_read;
@@ -153,12 +182,15 @@ float BatteryVoltage = 0;
 float BatteryAverageBuild = 0;
 float BatteryAverageFinal = 0;
 
+
 // Background
 boolean Backgroundinit = true;
 boolean BackgroundHearBeat = false;
 
+
 // Secondary Communication
 boolean Secondary_Ping_Sent = true;
+
 
 // ISR vars
 volatile int ISR_SecondaryComm = 0;
@@ -169,37 +201,24 @@ volatile boolean ISR_LaserFire = false;
 volatile int ISR_LaserFireLength = 0;
 volatile int ISR_LaserFireCount = 0;
 volatile byte Laserlrmov = 0;
-volatile short Laserlrpos = LASECENTERLR;
+volatile short Laserlrpos = LASERSTARTLR;
 volatile byte Laserudmov = 0;
-volatile short Laserudpos = 600;
-// the speed is in ms so multiple it by 100
-// the ISR runs at 10 microseconds per interrupt
-volatile int LaserTransitionSpeed = 1000;
+volatile short Laserudpos = LASERSTARTUD;
+// the ISR runs at 50 microseconds per interrupt
+// the speed is in ms , the default (startup) is 10ms so: .010 / .00005 = 200
+volatile int LaserTransitionSpeed = 200;
 volatile int ISR_LaserMoveCount = 0;
 
-// OBJECTS
-// WiFi
-WiFiServer      webServer(webPort);
-WiFiServer      socketServer(socketPort);
-WebSocketServer webSocketServer;
-WiFiClient      socketClient;
-
-// laser servo objects
-Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 // remote control webpage, gzipped and base64 encoding to save space
 char webpage_base64[] = "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";
 
+
 // move the select servo (SeroNum) to the requested position (pulseSize)
 void moveLaser( int ServoNum, int pulseSize)
 {
-  int pulseWidth;
-
-  // Convert to pulse width
-  pulseWidth = int(float(pulseSize) / 1000000 * SERVO_FREQUENCY * 4096);
-
   //Control Motor
-  pwm.setPWM(ServoNum, 0, pulseWidth);
+  pwm.setPWM(ServoNum, 0, pulseSize);
 }
 
 // set the motor direction
@@ -331,14 +350,7 @@ void WiFiConnect()
 }
 
 // Start MKR1010 software interrupt functions **********
-void setup_timer4(uint32_t freq_)
-{
-    uint16_t clk_div=get_clk_div(freq_);
-    uint8_t clk_cnt=(48000000/clk_div)/freq_;
-    setup_timer4(clk_div, clk_cnt);
-}
-
-void setup_timer4(uint16_t clk_div_, uint8_t count_)
+void setup_timer4()
 {
     // Set up the generic clock (GCLK4) used to clock timers
     REG_GCLK_GENDIV = GCLK_GENDIV_DIV(1) |          // Divide the 48MHz clock source by divisor 1: 48MHz/1=48MHz
@@ -360,7 +372,7 @@ void setup_timer4(uint16_t clk_div_, uint8_t count_)
     REG_TC4_CTRLA |= TC_CTRLA_MODE_COUNT8;          // Set the counter to 8-bit mode
     while (TC4->COUNT8.STATUS.bit.SYNCBUSY);        // Wait for synchronization
 
-    REG_TC4_COUNT8_CC0 = count_;                    // Set the TC4 CC0 register to some arbitary value
+    REG_TC4_COUNT8_CC0 = 150;                       // Set the TC4 CC0 value calculated for 50usec
     while (TC4->COUNT8.STATUS.bit.SYNCBUSY);        // Wait for synchronization
 
     NVIC_SetPriority(TC4_IRQn, 0);                  // Set the Nested Vector Interrupt Controller (NVIC) priority for TC4 to 0 (highest)
@@ -369,51 +381,18 @@ void setup_timer4(uint16_t clk_div_, uint8_t count_)
     REG_TC4_INTFLAG |= TC_INTFLAG_OVF;              // Clear the interrupt flags
     REG_TC4_INTENSET = TC_INTENSET_OVF;             // Enable TC4 interrupts
 
-    uint16_t prescale=0;
-    switch(clk_div_)
-    {
-        case 1:    prescale=TC_CTRLA_PRESCALER(0); break;
-        case 2:    prescale=TC_CTRLA_PRESCALER(1); break;
-        case 4:    prescale=TC_CTRLA_PRESCALER(2); break;
-        case 8:    prescale=TC_CTRLA_PRESCALER(3); break;
-        case 16:   prescale=TC_CTRLA_PRESCALER(4); break;
-        case 64:   prescale=TC_CTRLA_PRESCALER(5); break;
-        case 256:  prescale=TC_CTRLA_PRESCALER(6); break;
-        case 1024: prescale=TC_CTRLA_PRESCALER(7); break;
-    }
+    // value needed for 50usec isr
+    uint16_t prescale=TC_CTRLA_PRESCALER(4);
+    Serial.println("prescale " + (String)prescale);
+
     REG_TC4_CTRLA |= prescale | TC_CTRLA_WAVEGEN_MFRQ | TC_CTRLA_ENABLE;  // Enable TC4
     while (TC4->COUNT8.STATUS.bit.SYNCBUSY);                              // Wait for synchronization
 }
 
-uint16_t next_pow2(uint16_t v_)
-{
-    // the next power-of-2 of the value (if v_ is pow-of-2 returns v_)
-    --v_;
-    v_|=v_>>1;
-    v_|=v_>>2;
-    v_|=v_>>4;
-    v_|=v_>>8;
-    return v_+1;
-}
-
-uint16_t get_clk_div(uint32_t freq_)
-{
-    float ideal_clk_div=48000000.0f/(256.0f*float(freq_));
-    uint16_t clk_div=next_pow2(uint16_t(ceil(ideal_clk_div)));
-    switch(clk_div)
-    {
-        case 32: clk_div=64; break;
-        case 128: clk_div=256; break;
-        case 512: clk_div=1024; break;
-    }
-    return clk_div;
-}
-// End MKR1010 software interrupt functions **********
-
 // Interrupt Service Routine (ISR)
-void
-()
+void TC4_Handler()
 {
+  // check for overflow (OVF) interrupt
   if (TC4->COUNT16.INTFLAG.bit.OVF && TC4->COUNT16.INTENSET.bit.OVF)
   {
     // see if we are moving the Laser
@@ -425,17 +404,17 @@ void
             switch(Laserlrmov) {
                 // move left
                 case 1:
-                    if(Laserlrpos < SERVO_MAX_PULSE_WIDTH) {
+                    if(Laserlrpos < LASER_LR_SERVO_MAX_PULSE) {
                         Laserlrpos++;
+                      moveLaser(LaserLR, Laserlrpos);
                     }
-                    moveLaser(LaserLR, Laserlrpos);
                 break;
                 // move right
                 case 2:
-                    if(Laserlrpos > SERVO_MIN_PULSE_WIDTH) {
+                    if(Laserlrpos > LASER_LR_SERVO_MIN_PULSE) {
                         Laserlrpos--;
+                      moveLaser(LaserLR, Laserlrpos);
                     }
-                    moveLaser(LaserLR, Laserlrpos);
                 break;
             }
 
@@ -443,17 +422,17 @@ void
             switch(Laserudmov) {
                 // move up
                 case 1:
-                    if(Laserudpos < LASEMAXUD) {
+                    if(Laserudpos < LASER_UD_SERVO_MAX_PULSE) {
                         Laserudpos++;
+                      moveLaser(LaserUD, Laserudpos);
                     }
-                    moveLaser(LaserUD, Laserudpos);
                 break;
                 // move down
                 case 2:
-                    if(Laserudpos > SERVO_MIN_PULSE_WIDTH) {
+                    if(Laserudpos > LASER_UD_SERVO_MIN_PULSE) {
                         Laserudpos--;
+                      moveLaser(LaserUD, Laserudpos);
                     }
-                    moveLaser(LaserUD, Laserudpos);
                 break;
             }
         }
@@ -509,10 +488,11 @@ void
       ISR_SecondaryComm++;
     }
             
-    // keep - clear interrupt
+    // clear interrupt - clear the MC1 interrupt flag
     REG_TC4_INTFLAG = TC_INTFLAG_OVF;
   }
 }
+// End MKR1010 software interrupt functions **********
 
 void setup()
 {
@@ -558,16 +538,6 @@ void setup()
       // delay 10 second, remember we have to call sendBatteryStatus() 10 times to get the average so 1000 msec * 10 = 10 seconds
       delay(1000);
     }
-
-    // Start up the laser servos
-    pwm.begin();
-    pwm.setPWMFreq(SERVO_FREQUENCY);
-
-    // set left/right laser servo to center
-    // (2350 - 650 = 1,700 / 2 = 850 + 650 = 1500
-    moveLaser(LaserLR, Laserlrpos);
-    // set up/down laser servo to down
-    moveLaser(LaserUD, Laserudpos);
         
     // Serial port initialization
     if(TerminalAttached) {
@@ -595,11 +565,11 @@ void setup()
     // wait until it is open
     while (!Serial1) {  
     }
-
-   // done initilization so start the interrupts
-   // call ISR - TC4_Handler 20000 times per second
-   // an interrupt is called every 50 microseconds
-   setup_timer4(20000);
+    
+    // done initilization so start the interrupts
+    // call ISR - TC4_Handler 20000 times per second
+    // an interrupt is called every 50 microseconds
+    setup_timer4();
 
    // setup complete
    digitalWrite(LED_BUILTIN, HIGH);
@@ -720,6 +690,21 @@ void loop()
             Serial.println("Serial Port 1 Flushed");
             Serial.println("Background Init Complete");
         }
+        
+        // Start up the laser servos
+        Wire.begin(); // Wire communication begin
+        delay(100);
+        pwm.begin();
+        delay(100);
+        pwm.setOscillatorFrequency(SERVO_OSCILLATORFREQUENCY);
+        delay(100);
+        pwm.setPWMFreq(SERVO_FREQUENCY);
+        delay(100);
+    
+        // set left/right laser servo to center
+        moveLaser(LaserLR, Laserlrpos);
+        // set up/down laser servo to down
+        moveLaser(LaserUD, Laserudpos);
     }
     
     // Background Process 1
@@ -997,10 +982,10 @@ void loop()
                 webSocketServer.sendData("M:" + String(MotorResolution) + " inc");
             } else if (setting.charAt(0) == 'T') {
                 String lasertransition = setting.substring(1);
-                // the speed is in ms so multiple it by 100
-                // the ISR runs at 10 microseconds per interrupt
-                LaserTransitionSpeed = ((lasertransition.toInt()) * 100);
-                webSocketServer.sendData("T:" + String((LaserTransitionSpeed / 100)) + " ms");
+                // the speed is in ms so multiple it by 20
+                // the ISR runs at 50 microseconds per interrupt
+                LaserTransitionSpeed = ((lasertransition.toInt()) * 20);
+                webSocketServer.sendData("T:" + String((LaserTransitionSpeed / 20)) + " ms");
             } else if (setting.charAt(0) == 'D') {
                 webSocketServer.sendData("D:tankdirection: " + String(tankdirection));   
                 webSocketServer.sendData("D:rightmotorspd: " + String(rightmotorspd));   
@@ -1055,7 +1040,6 @@ void loop()
             case 16:
                 webSocketServer.sendData("R:Laser Fired");
                 break;
-            // serial communication
             case 17:
                 webSocketServer.sendData("R:Secondary TX " + String(setting));
                 break;
