@@ -1,11 +1,11 @@
 #include <global.h>
 #include <base64.h>
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
 #include <WebSocketClient.h>
 #include <WebSocketServer.h>
 #define _WIFININA_LOGLEVEL_       1
 #include <WiFiNINA_Generic.h>
-#include <Wire.h>
-#include <Adafruit_PWMServoDriver.h>
 #include "arduino_secrets.h"
 
 // global var
@@ -28,7 +28,7 @@ WiFiClient      socketClient;
 // Console Attached
 #ifndef TerminalAttached
     // true = terminal attached (send serial messages), false = no terminal attached no messages 
-    #define TerminalAttached  false
+    #define TerminalAttached  true
 #endif
 
 
@@ -519,7 +519,49 @@ void setup()
     pinMode(MLin2, OUTPUT);
     // set the direction
     setMotorDirection(tankdirection);
+    
+    // done initilization so start the interrupts
+    // call ISR - TC4_Handler 20000 times per second
+    // an interrupt is called every 50 microseconds
+    setup_timer4();
 
+    // Start the serial communication
+    Serial.begin(57600);
+    delay(100);
+    
+    // Start Secondary Serial port initialization
+    Serial1.begin(57600); // Initialize serial port to send and receive at 57600 baud
+    delay(100);
+    
+    // Serial port initialization
+    if(TerminalAttached) {
+        Serial.println("\nStart MultiServers");
+        Serial.println("Version " + String(WIFININA_GENERIC_VERSION));
+
+        // check and make sure we are using the lastest Firmware
+        String fv = WiFi.firmwareVersion();
+        if (fv < WIFI_FIRMWARE_LATEST_VERSION)
+        {
+            Serial.print("Your current firmware NINA FW v");
+            Serial.println(fv);
+            Serial.print("Please upgrade the firmware to NINA FW v");
+            Serial.println(WIFI_FIRMWARE_LATEST_VERSION);
+        }    
+    }
+          
+    // Start up the laser servos
+    Wire.begin(); // Wire communication begin
+    delay(100);
+    pwm.begin();
+    delay(100);
+    pwm.setOscillatorFrequency(SERVO_OSCILLATORFREQUENCY);
+    pwm.setPWMFreq(SERVO_FREQUENCY);
+
+    // set left/right laser servo to center
+    moveLaser(LaserLR, Laserlrpos);
+    // set up/down laser servo to down
+    moveLaser(LaserUD, Laserudpos);
+        
     // Get the Initial Battery Status so we can preset the battery average until we have one (every 30 seconds)
     // also check and make sure we are good to go else set the Low Voltage LED and wait
     analogReadResolution(12);
@@ -534,42 +576,7 @@ void setup()
           BatteryAverageFinal = BatteryVoltage;
           digitalWrite(LowVoltagePin, LOW);
       }
-
-      // delay 10 second, remember we have to call sendBatteryStatus() 10 times to get the average so 1000 msec * 10 = 10 seconds
-      delay(1000);
-    }
-        
-    // Serial port initialization
-    if(TerminalAttached) {
-        Serial.begin(57600);
-        // wait until it is open
-        while (!Serial) {  
-        }
-
-        Serial.println("\nStart MultiServers");
-        Serial.println("Version " + String(WIFININA_GENERIC_VERSION));
-
-        // check and make sure we are using the lastest Firmware
-        String fv = WiFi.firmwareVersion();
-        if (fv < WIFI_FIRMWARE_LATEST_VERSION)
-        {
-            Serial.print("Your current firmware NINA FW v");
-            Serial.println(fv);
-            Serial.print("Please upgrade the firmware to NINA FW v");
-            Serial.println(WIFI_FIRMWARE_LATEST_VERSION);
-        }    
-    }
-
-    // Secondary Serial port initialization
-    Serial1.begin(57600); // Initialize serial port to send and receive at 57600 baud
-    // wait until it is open
-    while (!Serial1) {  
-    }
-    
-    // done initilization so start the interrupts
-    // call ISR - TC4_Handler 20000 times per second
-    // an interrupt is called every 50 microseconds
-    setup_timer4();
+   }
 
    // setup complete
    digitalWrite(LED_BUILTIN, HIGH);
@@ -690,21 +697,6 @@ void loop()
             Serial.println("Serial Port 1 Flushed");
             Serial.println("Background Init Complete");
         }
-        
-        // Start up the laser servos
-        Wire.begin(); // Wire communication begin
-        delay(100);
-        pwm.begin();
-        delay(100);
-        pwm.setOscillatorFrequency(SERVO_OSCILLATORFREQUENCY);
-        delay(100);
-        pwm.setPWMFreq(SERVO_FREQUENCY);
-        delay(100);
-    
-        // set left/right laser servo to center
-        moveLaser(LaserLR, Laserlrpos);
-        // set up/down laser servo to down
-        moveLaser(LaserUD, Laserudpos);
     }
     
     // Background Process 1
