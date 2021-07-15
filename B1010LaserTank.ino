@@ -28,7 +28,7 @@ WiFiClient      socketClient;
 // Console Attached
 #ifndef TerminalAttached
     // true = terminal attached (send serial messages), false = no terminal attached no messages 
-    #define TerminalAttached  true
+    #define TerminalAttached  false
 #endif
 
 
@@ -90,19 +90,19 @@ WiFiClient      socketClient;
 // Laser
 #ifndef LASER_LR_SERVO_MIN_PULSE
     // PCA9685 minimum pulse with to servos
-    #define LASER_LR_SERVO_MIN_PULSE   120
+    #define LASER_LR_SERVO_MIN_PULSE   130
 #endif
 #ifndef LASER_LR_SERVO_MAX_PULSE
     // PCA9685 minimum pulse with to servos
-    #define LASER_LR_SERVO_MAX_PULSE   550
+    #define LASER_LR_SERVO_MAX_PULSE   540
 #endif
 #ifndef LASER_UD_SERVO_MIN_PULSE
     // PCA9685 maximum pulse with to servos
-    #define LASER_UD_SERVO_MIN_PULSE   108
+    #define LASER_UD_SERVO_MIN_PULSE   110
 #endif
 #ifndef LASER_UD_SERVO_MAX_PULSE
     // PCA9685 maximum pulse with to servos
-    #define LASER_UD_SERVO_MAX_PULSE   325
+    #define LASER_UD_SERVO_MAX_PULSE   300
 #endif
 #ifndef SERVO_FREQUENCY
     // PCA9685 frequency of pulses to servos
@@ -122,7 +122,7 @@ WiFiClient      socketClient;
 #endif
 #ifndef LASERSTARTUD
     // the center of the left/right position
-    #define LASERSTARTUD 108
+    #define LASERSTARTUD 110
 #endif
 
 
@@ -154,6 +154,7 @@ WiFiClient      socketClient;
 #endif
 
 
+// Motor
 // motor speed control values, these are set as commands come in from client
 // Motor control range is 0 : 250 (0 - 5 or 0 = off and 5 = full speed)
 // each click applies one count of the default motor resolution
@@ -249,11 +250,28 @@ void setMotorDirection(boolean tankdirection)
 // if StopFlag = true stop the tank else set the speed as requested
 void setMotorSpeed(boolean StopFlag = false)
 {
+    // temp var used for trim adjustment
+    short trimAdjustment;
+    trimAdjustment = rightmotorspd;
+    
     if(StopFlag) {
         analogWrite(MRen1, 0); // Motor 1 - Send PWM signal to L293D Enable pin
         analogWrite(MLen1, 0); // Motor 2 - Send PWM signal to L293D Enable pin
     } else {
-        analogWrite(MRen1, rightmotorspd); // Motor 1 - Send PWM signal to L293D Enable pin
+        // make trim adjustment for motor differences
+        if(rightmotorspd > 0) {
+          if(rightmotorspd == leftmotorspd) {
+            trimAdjustment -= 3;  
+          }
+        }
+        
+        if(TerminalAttached) {
+          Serial.println("rightmotorspd " + String(rightmotorspd));
+          Serial.println("MRen1 " + String(trimAdjustment));
+          Serial.println("MLen1 " + String(leftmotorspd));
+        }
+        
+        analogWrite(MRen1, trimAdjustment); // Motor 1 - Send PWM signal to L293D Enable pin
         analogWrite(MLen1, leftmotorspd); // Motor 2 - Send PWM signal to L293D Enable pin
     }
 }
@@ -393,26 +411,24 @@ void setup_timer4()
 void TC4_Handler()
 {
   // check for overflow (OVF) interrupt
-  if (TC4->COUNT16.INTFLAG.bit.OVF && TC4->COUNT16.INTENSET.bit.OVF)
+  if (TC4->COUNT8.INTFLAG.bit.OVF && TC4->COUNT8.INTENSET.bit.OVF)
   {
     // see if we are moving the Laser
     if(Laserlrmov != 0 || Laserudmov != 0) {
-        ISR_LaserMoveCount++;
-
         if(ISR_LaserMoveCount == 1) {
             // move the laser left or right if it is on
             switch(Laserlrmov) {
                 // move left
                 case 1:
                     if(Laserlrpos < LASER_LR_SERVO_MAX_PULSE) {
-                        Laserlrpos++;
+                      Laserlrpos++;
                       moveLaser(LaserLR, Laserlrpos);
                     }
                 break;
                 // move right
                 case 2:
                     if(Laserlrpos > LASER_LR_SERVO_MIN_PULSE) {
-                        Laserlrpos--;
+                      Laserlrpos--;
                       moveLaser(LaserLR, Laserlrpos);
                     }
                 break;
@@ -423,14 +439,14 @@ void TC4_Handler()
                 // move up
                 case 1:
                     if(Laserudpos < LASER_UD_SERVO_MAX_PULSE) {
-                        Laserudpos++;
+                      Laserudpos++;
                       moveLaser(LaserUD, Laserudpos);
                     }
                 break;
                 // move down
                 case 2:
                     if(Laserudpos > LASER_UD_SERVO_MIN_PULSE) {
-                        Laserudpos--;
+                      Laserudpos--;
                       moveLaser(LaserUD, Laserudpos);
                     }
                 break;
@@ -439,8 +455,10 @@ void TC4_Handler()
 
         // do this every x milliseconds
         // where x is set as the laser transition speed count
-        if(ISR_LaserMoveCount >= LaserTransitionSpeed) {
-            ISR_LaserMoveCount = 0;
+        if(ISR_LaserMoveCount < LaserTransitionSpeed) {
+          ISR_LaserMoveCount++;
+        } else {
+          ISR_LaserMoveCount = 0;
         }
     }
 
@@ -503,7 +521,7 @@ void setup()
     // setup the low voltage pin
     pinMode(LowVoltagePin, OUTPUT);
     digitalWrite(LowVoltagePin, LOW);
-   
+
     // Digital PWM Pin
     pinMode(LASERDIGITALPWM, OUTPUT);
     digitalWrite(LASERDIGITALPWM, LOW); // No PWM
@@ -519,6 +537,19 @@ void setup()
     pinMode(MLin2, OUTPUT);
     // set the direction
     setMotorDirection(tankdirection);
+
+    // Start up the laser servos
+    pwm.begin();
+    pwm.setOscillatorFrequency(SERVO_OSCILLATORFREQUENCY);
+    pwm.setPWMFreq(SERVO_FREQUENCY);
+    delay(10);
+
+    // set left/right laser servo to center
+    moveLaser(LaserLR, Laserlrpos);
+    delay(10);
+    // set up/down laser servo to down
+    moveLaser(LaserUD, Laserudpos);
+    delay(2500);
     
     // done initilization so start the interrupts
     // call ISR - TC4_Handler 20000 times per second
@@ -548,20 +579,7 @@ void setup()
             Serial.println(WIFI_FIRMWARE_LATEST_VERSION);
         }    
     }
-          
-    // Start up the laser servos
-    Wire.begin(); // Wire communication begin
-    delay(100);
-    pwm.begin();
-    delay(100);
-    pwm.setOscillatorFrequency(SERVO_OSCILLATORFREQUENCY);
-    pwm.setPWMFreq(SERVO_FREQUENCY);
-
-    // set left/right laser servo to center
-    moveLaser(LaserLR, Laserlrpos);
-    // set up/down laser servo to down
-    moveLaser(LaserUD, Laserudpos);
-        
+           
     // Get the Initial Battery Status so we can preset the battery average until we have one (every 30 seconds)
     // also check and make sure we are good to go else set the Low Voltage LED and wait
     analogReadResolution(12);
@@ -971,7 +989,7 @@ void loop()
             } else if (setting.charAt(0) == 'M') {
                 String motorlength = setting.substring(1);
                 MotorResolution = (motorlength.toInt());
-                webSocketServer.sendData("M:" + String(MotorResolution) + " inc");
+                webSocketServer.sendData("M:" + String(MotorResolution) + " inc");          
             } else if (setting.charAt(0) == 'T') {
                 String lasertransition = setting.substring(1);
                 // the speed is in ms so multiple it by 20
